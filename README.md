@@ -1,5 +1,7 @@
 # Anomaly-Detection
 
+
+#### Abstract
 Ce projet explore l’application de modèles d’apprentissage profond pour la détection d’anomalies dans des données variées, telles que les comprimés et gélules (MVTec Pill), les chiffres manuscrits (MNIST) et les données de sécurité réseau (CICIDS2017). Différentes approches ont été mises en œuvre, incluant les perceptrons multicouches (PMC), les réseaux antagonistes génératifs (GAN), les cartes de Kohonen (SOM) et les réseaux de croyances profonds (DBN). Les résultats démontrent la pertinence et les limites de chaque méthode selon le type de données et le contexte d’application. Ces travaux offrent une vision comparative des capacités des modèles de deep learning pour résoudre des problématiques critiques dans des domaines tels que la détection de défauts industriels, l’analyse de données manuscrites et la cybersécurité.
 
 Il s'agit d'un projet soumis en vue de l’accomplissement des exigences de l’ISUP et Sorbonne Université pour l’obtention du diplôme de Master 2 Data Science.
