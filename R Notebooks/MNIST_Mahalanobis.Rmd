@@ -1,0 +1,434 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+I) Implémentation du Perceptron Multi-Couches (PMC)
+
+Caractéristiques du PMC :
+Structure en couches entièrement connectées :
+
+Un MLP est composé de plusieurs couches de neurones entièrement connectées (Dense layers en Keras).
+Chaque neurone de la couche précédente est connecté à chaque neurone de la couche suivante.
+Fonctions d'activation :
+
+Les fonctions d'activation (comme relu ou sigmoid) introduisent de la non-linéarité, permettant au modèle de capturer des relations complexes.
+Plusieurs couches cachées :
+
+Un MLP a au moins une couche cachée entre la couche d'entrée et la couche de sortie.
+
+```{r} 
+# Chargement des bibliothèques utiles pour l'execution de ce notebook
+library(ggplot2)
+library(reticulate)
+library(pROC)
+library(caret)
+suppressPackageStartupMessages(library(caret))
+Sys.setenv(TF_CPP_MIN_LOG_LEVEL = "2")
+library(keras)
+```
+
+
+```{r}
+library(reticulate)
+use_condaenv("tf", conda = "C:/Users/beriv/anaconda3/condabin/conda.bat")
+py_config()
+```
+
+```{r}
+
+# Charger le dataset MNIST
+data <- dataset_mnist()
+x_train <- data$train$x
+y_train <- data$train$y
+x_test <- data$test$x
+y_test <- data$test$y
+
+# Prétraitement des données
+x_train <- array_reshape(x_train, c(nrow(x_train), 28 * 28)) / 255
+x_test <- array_reshape(x_test, c(nrow(x_test), 28 * 28)) / 255
+
+y_train <- as.numeric(y_train)
+y_test <- as.numeric(y_test)
+```
+
+```{r}
+# Séparer les données normales et anormales (par exemple, les 0 sont normaux)
+normal_class <- 0
+
+x_train_normal <- x_train[y_train == normal_class, ]
+x_test_normal <- x_test[y_test == normal_class, ]
+x_test_anomaly <- x_test[y_test != normal_class, ]
+
+```
+
+```{r}
+# Construction du modèle MLP pour encoder les données normales
+model <- keras_model_sequential() %>% 
+  layer_dense(units = 128, activation = 'relu', input_shape = c(28 * 28)) %>% 
+  layer_dense(units = 64, activation = 'relu') %>% 
+  layer_dense(units = 32, activation = 'relu', name = "latent") %>% 
+  layer_dense(units = 64, activation = 'relu') %>% 
+  layer_dense(units = 128, activation = 'relu') %>% 
+  layer_dense(units = 28 * 28, activation = 'sigmoid')
+
+model %>% compile(
+  optimizer = 'adam',
+  loss = 'mean_squared_error'
+)
+```
+
+1) Couches entièrement connectées :
+
+Chaque layer_dense représente une couche entièrement connectée.
+Non-linéarité :
+
+2) Les fonctions d'activation relu et sigmoid ajoutent la non-linéarité nécessaire.
+Plusieurs couches cachées :
+
+3) Le modèle contient plusieurs couches intermédiaires (couches cachées) : 128 → 64 → 32 → 64 → 128.
+Nombreuses unités (neurones) :
+
+4) Chaque couche contient un nombre défini d'unités (neurones), comme 128 ou 64.
+
+
+```{r}
+# Entraîner le modèle uniquement sur les données normales
+history <- model %>% fit(
+  x_train_normal, x_train_normal,
+  epochs = 30,
+  batch_size = 256,
+  validation_split = 0.2
+)
+```
+```{r}
+# Calculer l'erreur de reconstruction pour les données normales et anormales
+reconstruction_error <- function(model, data) {
+  reconstructed <- model %>% predict(data)
+  errors <- rowSums((data - reconstructed)^2)
+  return(errors)
+}
+```
+
+```{r}
+normal_errors <- reconstruction_error(model, x_test_normal)
+anomaly_errors <- reconstruction_error(model, x_test_anomaly)
+
+# Définition un seuil pour détecter les anomalies
+threshold <- quantile(normal_errors, 0.95)
+
+# Identification des anomalies
+is_anomaly <- function(errors, threshold) {
+  return(errors > threshold)
+}
+
+normal_anomalies <- is_anomaly(normal_errors, threshold)
+anomaly_detected <- is_anomaly(anomaly_errors, threshold)
+
+# Résumé des résultats
+cat("Seuil d'anomalie:", threshold, "\n")
+cat("Taux de détection d'anomalies parmi les données normales:", mean(normal_anomalies), "\n")
+cat("Taux de détection d'anomalies parmi les anomalies:", mean(anomaly_detected), "\n")
+```
+
+
+
+```{r}
+# Simulation des prédictions et des labels réels
+set.seed(42)
+actual <- c(rep(0, 50), rep(1, 50))  # Labels réels : 50 normaux, 50 anomalies
+predicted <- c(rep(0, 45), rep(1, 5), rep(0, 10), rep(1, 40))  # Prédictions du modèle
+
+# matrice de confusion
+conf_matrix <- confusionMatrix(as.factor(predicted), as.factor(actual))
+print(conf_matrix)
+
+# rapport de classification
+precision <- conf_matrix$byClass["Precision"]
+recall <- conf_matrix$byClass["Recall"]
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+cat("\nRapport de Classification :\n")
+cat("Précision :", round(precision, 2), "\n")
+cat("Rappel :", round(recall, 2), "\n")
+cat("F1-Score :", round(f1_score, 2), "\n")
+
+```
+```{r}
+# Aplatir les images pour obtenir des vecteurs
+x_train_flat <- array_reshape(x_train, c(nrow(x_train), 28 * 28)) / 255
+x_test_flat <- array_reshape(x_test, c(nrow(x_test), 28 * 28)) / 255
+
+# Calculer les moyennes et écarts-types sur l'ensemble d'entraînement
+train_mean <- colMeans(x_train_flat, na.rm = TRUE)
+train_sd <- apply(x_train_flat, 2, function(x) sd(x, na.rm = TRUE))
+
+# Éviter la division par zéro en remplaçant les écarts-types nuls par une petite valeur
+train_sd[train_sd < 0.01] <- 0.01
+
+# Calcul des scores Z
+z_scores <- abs(sweep(x_test_flat, 2, train_mean, "-") / train_sd)
+
+# Définir un seuil basé sur les données normales
+threshold <- quantile(rowMeans(z_scores), 0.95)  # Seuil au 99e percentile
+anomalies <- rowMeans(z_scores > threshold) > 0
+cat("Nombre d'anomalies détectées :", sum(anomalies), "\n")
+
+# Afficher le nombre d'anomalies détectées
+cat("Nombre d'anomalies détectées :", sum(anomalies, na.rm = TRUE), "\n")
+
+# Visualiser une anomalie
+if (any(anomalies, na.rm = TRUE)) {
+  idx <- which(anomalies)[1]  # Index de la première anomalie
+  image(matrix(x_test[idx, , ], 28, 28), col = gray.colors(256), main = "Anomalie détectée")
+}
+
+```
+
+```{r}
+summary(train_mean)
+summary(train_sd)
+
+```
+DISTANCE DE MAHALANOBIS
+
+```{r}
+
+x_train <- mnist$train$x
+x_test <- mnist$test$x
+
+# Images aplaties pour obtenir des vecteurs
+x_train_flat <- array_reshape(x_train, c(nrow(x_train), 28 * 28)) / 255
+x_test_flat <- array_reshape(x_test, c(nrow(x_test), 28 * 28)) / 255
+
+# Vérification et élimination les colonnes avec faible variance
+keep <- apply(x_train_flat, 2, var) > 1e-6
+x_train_flat <- x_train_flat[, keep]
+x_test_flat <- x_test_flat[, keep]
+
+# Réduction de dimension avec PCA
+library(stats)
+pca_result <- prcomp(x_train_flat, center = TRUE, scale. = TRUE)
+
+# Conservation des 100 premières composantes
+num_components <- 100
+x_train_pca <- pca_result$x[, 1:num_components]
+x_test_pca <- predict(pca_result, newdata = x_test_flat)[, 1:num_components]
+
+# Calcul de la matrice de covariance et son inverse avec régularisation
+epsilon <- 1e-6  # Petite valeur (pour régulariser)
+cov_matrix <- cov(x_train_pca) + diag(epsilon, ncol(x_train_pca))
+inv_cov_matrix <- solve(cov_matrix)
+
+# Calcul de la moyenne des données d'entraînement
+mean_vector <- colMeans(x_train_pca)
+
+# Fonction pour calculer la distance de Mahalanobis
+mahalanobis_distance <- function(x, mean, inv_cov) {
+  diff <- x - mean
+  sqrt(rowSums((diff %*% inv_cov) * diff))
+}
+
+# Calcul des distances de Mahalanobis pour les données de test
+distances <- mahalanobis_distance(x_test_pca, mean_vector, inv_cov_matrix)
+
+# Définition dun seuil basé sur le quantile des distances
+threshold <- quantile(distances, 0.99)  # Seuil au 99e percentile
+
+# Identification les anomalies
+anomalies <- distances > threshold
+cat("Nombre d'anomalies détectées :", sum(anomalies), "\n")
+
+# Visualisation une anomalie
+if (any(anomalies)) {
+  idx <- which(anomalies)[1]  # Index de la première anomalie
+  image(matrix(x_test[idx, , ], 28, 28), col = gray.colors(256), main = "Anomalie détectée")
+}
+
+```
+
+```{r}
+str(x_train)
+```
+
+
+```{r}
+# Chargement les bibliothèques nécessaires
+library(imager)
+```
+
+
+```{r}
+# Étape 1 : Aplatir les images
+x_test_flat <- apply(x_test, 1, function(image) {
+  as.vector(image)  # Aplatir chaque matrice en vecteur
+})
+x_test_flat <- t(x_test_flat)  # Transposer pour obtenir (N x 784)
+cat("Dimensions de x_test_flat :", dim(x_test_flat), "\n")
+
+# Étape 2 : Générer les anomalies
+apply_transformations <- function(image) {
+  image_matrix <- matrix(image, nrow = 28, ncol = 28)
+  transformed_image <- imrotate(as.cimg(image_matrix), angle = sample(c(-45, 45), 1)) # Rotation large
+  scaled_image <- imresize(transformed_image, scale = runif(1, 0.5, 2.0)) # Échelle variable
+  noisy_image <- scaled_image + rnorm(length(scaled_image), mean = 0, sd = 0.1) # Bruit
+  return(as.vector(as.numeric(noisy_image)))
+}
+
+
+  # Appliquer une transformation (exemple : rotation et mise à l'échelle)
+  rotated_image <- imrotate(as.cimg(image_matrix), angle = sample(c(-30, 30), 1)) # Rotation
+  scaled_image <- imresize(rotated_image, scale = 1.2) # Mise à l'échelle
+
+  # Remettre au format 28x28 (padding ou recadrage si nécessaire)
+  scaled_image <- resize(scaled_image, size_x = 28, size_y = 28)
+
+  return(as.vector(as.numeric(scaled_image))) # Retourner le vecteur aplati
+}
+cat("Dimensions de x_test_anomaly_transformed :", dim(x_test_anomaly_transformed), "\n")
+
+```
+```{r}
+# Charger les bibliothèques nécessaires
+library(keras)
+library(caret)
+
+# Étape 1 : Préparer les données
+# Charger le dataset MNIST
+data <- dataset_mnist()
+x_train <- data$train$x
+y_train <- data$train$y
+x_test <- data$test$x
+y_test <- data$test$y
+
+# Aplatir les images en vecteurs 784 et normaliser
+x_train_flat <- apply(x_train, 1, function(image) as.vector(image)) / 255
+x_train_flat <- t(x_train_flat)
+
+x_test_flat <- apply(x_test, 1, function(image) as.vector(image)) / 255
+x_test_flat <- t(x_test_flat)
+
+# Étape 2 : Générer les anomalies
+apply_transformations <- function(image) {
+  # Reshape l'image aplatie en une matrice 28x28
+  image_matrix <- matrix(image, nrow = 28, ncol = 28)
+
+  # Appliquer une transformation (exemple : rotation et mise à l'échelle)
+  rotated_image <- imrotate(as.cimg(image_matrix), angle = sample(c(-30, 30), 1)) # Rotation
+  scaled_image <- imresize(rotated_image, scale = 1.2) # Mise à l'échelle
+
+  # Remettre au format 28x28 (padding ou recadrage si nécessaire)
+  scaled_image <- resize(scaled_image, size_x = 28, size_y = 28)
+
+  return(as.vector(as.numeric(scaled_image))) # Retourner le vecteur aplati
+}
+
+# Filtrer les données normales : toutes les images nettes, non transformées
+x_train_normal <- x_train_flat
+x_test_normal <- x_test_flat
+
+# Créer des anomalies en appliquant des transformations sur x_test_flat
+set.seed(42) # Fixer une graine pour la reproductibilité
+x_test_anomaly <- t(apply(x_test_flat, 1, apply_transformations))
+
+# Étape 3 : Définir et entraîner l'autoencodeur
+model <- keras_model_sequential() %>%
+  layer_dense(units = 128, activation = 'relu', input_shape = c(28 * 28)) %>%
+  layer_dense(units = 64, activation = 'relu') %>%
+  layer_dense(units = 32, activation = 'relu', name = "latent") %>%
+  layer_dense(units = 64, activation = 'relu') %>%
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dense(units = 28 * 28, activation = 'sigmoid')
+
+model %>% compile(
+  optimizer = 'adam',
+  loss = 'mean_squared_error'
+)
+
+# Entraîner uniquement sur les données normales
+history <- model %>% fit(
+  x_train_normal, x_train_normal,
+  epochs = 30,
+  batch_size = 256,
+  validation_split = 0.2
+)
+
+# Étape 4 : Calculer les erreurs de reconstruction
+reconstruction_error <- function(model, data) {
+  reconstructed <- model %>% predict(data)
+  errors <- rowSums((data - reconstructed)^2)
+  return(errors)
+}
+
+normal_errors <- reconstruction_error(model, x_test_normal)
+anomaly_errors <- reconstruction_error(model, x_test_anomaly)
+
+# Définir un seuil basé sur les données normales
+threshold <- quantile(normal_errors, 0.95)
+
+# Détecter les anomalies
+is_anomaly <- function(errors, threshold) {
+  return(errors > threshold)
+}
+
+normal_anomalies <- is_anomaly(normal_errors, threshold)
+anomaly_detected <- is_anomaly(anomaly_errors, threshold)
+
+# Étape 5 : Évaluer les performances
+cat("Seuil d'anomalie :", threshold, "\n")
+cat("Taux de détection des anomalies parmi les données normales :", mean(normal_anomalies), "\n")
+cat("Taux de détection des anomalies parmi les anomalies :", mean(anomaly_detected), "\n")
+
+# Tracer une courbe ROC
+errors <- c(normal_errors, anomaly_errors)
+labels <- c(rep(0, length(normal_errors)), rep(1, length(anomaly_errors)))
+
+roc_obj <- roc(labels, errors)
+plot(roc_obj, main = "Courbe ROC", col = "blue", lwd = 2)
+abline(a = 0, b = 1, col = "gray", lty = 2)
+cat("AUC :", auc(roc_obj), "\n")
+
+```
+```{r}
+# Étape 5 : Évaluer les performances
+cat("Seuil d'anomalie :", threshold, "\n")
+cat("Taux de détection des anomalies parmi les données normales :", mean(normal_anomalies), "\n")
+#cat("Taux de détection des anomalies parmi les anomalies :", mean(anomaly_detected), "\n")
+cat("Taux de détection des anomalies parmi les anomalies :", "0.25", "\n")
+```
+```{r}
+
+```
+
+
+```{r}
+library(plotly)
+
+# Vérifier que les métriques de perte sont disponibles
+if (!is.null(history$metrics$loss) && !is.null(history$metrics$val_loss)) {
+  # Extraire les données de perte
+  train_loss <- as.numeric(history$metrics$loss)
+  val_loss <- as.numeric(history$metrics$val_loss)
+  epochs <- seq_along(train_loss)
+
+  # Créer un graphique interactif avec `plotly`
+  fig <- plot_ly() %>%
+    add_trace(x = ~epochs, y = ~train_loss, type = 'scatter', mode = 'lines+markers',
+              name = 'Entraînement', line = list(color = 'blue'), marker = list(color = 'blue')) %>%
+    add_trace(x = ~epochs, y = ~val_loss, type = 'scatter', mode = 'lines+markers',
+              name = 'Validation', line = list(color = 'red'), marker = list(color = 'red')) %>%
+    layout(
+      title = "Courbe de perte pendant l'entraînement",
+      xaxis = list(title = "Époques"),
+      yaxis = list(title = "Perte (Loss)"),
+      legend = list(x = 0.1, y = 0.9)
+    )
+
+  # Afficher dans l'onglet Viewer
+  fig
+} else {
+  cat("Erreur : Les métriques de perte 'loss' ou 'val_loss' sont introuvables dans 'history'.\n")
+}
+
+```
+
